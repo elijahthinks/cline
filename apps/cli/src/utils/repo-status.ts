@@ -26,17 +26,34 @@ export function isSameRepoStatus(a: RepoStatus, b: RepoStatus): boolean {
 	);
 }
 
+function git(cwd: string, args: string[]) {
+	return execFileAsync("git", ["-C", cwd, ...args], {
+		encoding: "utf8",
+		// Prevent a console window from flashing on Windows.
+		windowsHide: true,
+	});
+}
+
+// Diff the working tree against HEAD so staged and unstaged changes are both
+// counted. Before the first commit HEAD doesn't exist, so diff against the
+// empty tree instead.
+async function readShortStat(cwd: string) {
+	try {
+		return await git(cwd, ["diff", "--shortstat", "HEAD", "--"]);
+	} catch (error) {
+		const hashEmptyTree = git(cwd, ["hash-object", "-t", "tree", "--stdin"]);
+		hashEmptyTree.child.stdin?.end();
+		const emptyTree = await hashEmptyTree.catch(() => {
+			throw error;
+		});
+		return git(cwd, ["diff", "--shortstat", emptyTree.stdout.trim(), "--"]);
+	}
+}
+
 export async function readRepoStatus(cwd: string): Promise<RepoStatus> {
 	const [branchResult, diffResult] = await Promise.allSettled([
-		execFileAsync("git", ["-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"], {
-			encoding: "utf8",
-			// Prevent a console window from flashing on Windows.
-			windowsHide: true,
-		}),
-		execFileAsync("git", ["-C", cwd, "diff", "--shortstat"], {
-			encoding: "utf8",
-			windowsHide: true,
-		}),
+		git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]),
+		readShortStat(cwd),
 	]);
 
 	const branch =
